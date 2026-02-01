@@ -291,7 +291,8 @@ func getFileSymbolCommand() cli.Command {
 		Description: `Gets detailed information about a symbol including its
 dependencies and references.
 Example:
-  scip cli get_file_symbol github.com/sourcegraph/scip bindings/go/scip/assertions_noop.go assert`,
+  scip cli get_file_symbol github.com/sourcegraph/scip cmd/scip/convert.go Converter
+  scip cli get_file_symbol github.com/sourcegraph/scip cmd/scip/convert.go NewConverter 233`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:        "output",
@@ -304,6 +305,7 @@ Example:
 			repo := c.Args().Get(0)
 			filePath := c.Args().Get(1)
 			symbolName := c.Args().Get(2)
+			line := c.Args().Get(3)
 			if repo == "" {
 				return errors.New("missing argument for repository name")
 			}
@@ -313,13 +315,13 @@ Example:
 			if symbolName == "" {
 				return errors.New("missing argument for symbol name")
 			}
-			return getFileSymbolMain(outputDir, repo, filePath, symbolName, c.App.Writer)
+			return getFileSymbolMain(outputDir, repo, filePath, symbolName, line, c.App.Writer)
 		},
 	}
 	return command
 }
 
-func getFileSymbolMain(outputDir, repo, filePath, symbolName string, out io.Writer) error {
+func getFileSymbolMain(outputDir, repo, filePath, symbolName, lineArg string, out io.Writer) error {
 	outputDir = expandHome(outputDir)
 
 	// Convert repo name to RST file path
@@ -328,15 +330,21 @@ func getFileSymbolMain(outputDir, repo, filePath, symbolName string, out io.Writ
 		return errors.Errorf("file not found in any RST: %s", filePath)
 	}
 
+	// Parse optional line number
+	var line int32
+	if lineArg != "" {
+		fmt.Sscanf(lineArg, "%d", &line)
+	}
+
 	// Get symbol details
-	details, err := getSymbolDetails(rstFile, filePath, symbolName)
+	details, err := getSymbolDetails(rstFile, filePath, symbolName, line)
 	if err != nil {
 		return err
 	}
 
 	// Output in reni-compatible format
-	fmt.Fprintf(out, `{"nodes":[`)
-	fmt.Fprintf(out, `{"name":%q,"type":%q,"file":%q,"line":%d`, details.Name, details.Kind, filePath, details.Line)
+	fmt.Fprintf(out, `{"mod_path":%q,"pkg_path":%q,"file_path":%q,"nodes":[`, repo, extractPkgPath(repo), filePath)
+	fmt.Fprintf(out, `{"name":%q,"signature":%q,"line":%d`, details.Name, details.Signature, details.Line)
 	if len(details.Dependencies) > 0 {
 		fmt.Fprintf(out, `,"dependencies":[{"file_path":%q,"names":[`, details.FilePath)
 		for i, dep := range details.Dependencies {
@@ -357,20 +365,24 @@ func getFileSymbolMain(outputDir, repo, filePath, symbolName string, out io.Writ
 		}
 		fmt.Fprint(out, "]}]")
 	}
+	if details.Documentation != "" {
+		fmt.Fprintf(out, `,"codes":%q`, details.Documentation)
+	}
 	fmt.Fprintln(out, "}]}")
 	return nil
 }
 
 type SymbolDetails struct {
 	Name         string
-	Kind         string
+	Signature    string
 	FilePath     string
-	Line         int
+	Line         int32
 	Dependencies []string
 	References   []string
+	Documentation string
 }
 
-func getSymbolDetails(rstPath, filePath, symbolName string) (*SymbolDetails, error) {
+func getSymbolDetails(rstPath, filePath, symbolName string, line int32) (*SymbolDetails, error) {
 	data, err := os.ReadFile(rstPath)
 	if err != nil {
 		return nil, err
@@ -390,13 +402,18 @@ func getSymbolDetails(rstPath, filePath, symbolName string) (*SymbolDetails, err
 	for symKey, sym := range doc.Symbols {
 		baseName := extractSymbolName(symKey)
 		if baseName == symbolName || strings.HasSuffix(baseName, "."+symbolName) {
+			// If line is specified, match by line number too
+			if line > 0 && sym.Line != line {
+				continue
+			}
 			return &SymbolDetails{
-				Name:         baseName,
-				Kind:         sym.Kind,
-				FilePath:     filePath,
-				Line:         1,
-				Dependencies: sym.DependenceOn,
-				References:   sym.ReferenceBy,
+				Name:          baseName,
+				Signature:     sym.Signature,
+				FilePath:      filePath,
+				Line:          sym.Line,
+				Dependencies:  sym.DependenceOn,
+				References:    sym.ReferenceBy,
+				Documentation: sym.Documentation,
 			}, nil
 		}
 	}
