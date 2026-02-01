@@ -128,3 +128,4 @@ require (
 	modernc.org/sqlite v1.27.0 // indirect
 	mvdan.cc/gofumpt v0.5.0 // indirect
 )
+

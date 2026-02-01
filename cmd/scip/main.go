@@ -25,7 +25,8 @@ func commands() []*cli.Command {
 	stats := statsCommand()
 	test := testCommand()
 	convert := convertCommand()
-	return []*cli.Command{&lint, &print, &snapshot, &stats, &test, &convert}
+	parse := parseCommand()
+	return []*cli.Command{&lint, &print, &snapshot, &stats, &test, &convert, &parse}
 }
 
 //go:embed version.txt
