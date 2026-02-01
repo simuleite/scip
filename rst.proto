@@ -31,4 +31,6 @@ message Symbol {
   string documentation = 3;    // Documentation string
   repeated string reference_by = 4;  // Symbols that reference this symbol
   repeated string dependence_on = 5; // Symbols this symbol depends on
+  string signature = 6;        // Function/method signature (e.g., "func foo(bar string) error")
+  int32 line = 7;              // Line number where symbol is defined
 }

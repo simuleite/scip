@@ -14,6 +14,25 @@ import (
 	rst "github.com/sourcegraph/scip/cmd/scip/rst"
 )
 
+// detectRepoID extracts the module name from SCIP symbol format.
+// SCIP symbol format: "<tool> <manager> <module> <commit> `path`/symbol"
+func detectRepoID(index *scip.Index) string {
+	for _, doc := range index.Documents {
+		for _, sym := range doc.Symbols {
+			if sym.Symbol == "" || scip.IsLocalSymbol(sym.Symbol) {
+				continue
+			}
+			// Parse SCIP symbol format
+			parts := strings.SplitN(sym.Symbol, " ", 4)
+			if len(parts) >= 3 {
+				// parts[2] is the module name (e.g., "github.com/sourcegraph/scip")
+				return parts[2]
+			}
+		}
+	}
+	return ""
+}
+
 func parseCommand() cli.Command {
 	var outputDir, repoID string
 	command := cli.Command{
@@ -21,7 +40,7 @@ func parseCommand() cli.Command {
 		Usage: "Parse SCIP index to RST (Relation Symbol Table) format",
 		Description: `Converts a SCIP index to RST format for efficient code navigation.
 Example:
-  scip parse index.scip -o ~/.rsts --repo github.com/sourcegraph/scip
+  scip parse index.scip -o ~/.rsts
 
 Output files are stored as protobuf binary format:
   {Sanitized_Repo_ID}.{Language_Code}.rst
@@ -36,9 +55,8 @@ Use 'scip print' to output RST as JSON for debugging.`,
 			},
 			&cli.StringFlag{
 				Name:        "repo",
-				Usage:       "Repository identifier (e.g., github.com/sourcegraph/scip)",
+				Usage:       "Repository identifier (auto-detected from SCIP index if not specified)",
 				Destination: &repoID,
-				Required:    true,
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -56,6 +74,14 @@ func parseMain(indexPath, outputDir, repoID string) error {
 	index, err := readFromOption(indexPath)
 	if err != nil {
 		return err
+	}
+
+	// Auto-detect repoID from SCIP index if not provided
+	if repoID == "" {
+		repoID = detectRepoID(index)
+		if repoID == "" {
+			return errors.New("could not auto-detect repo ID; please specify --repo")
+		}
 	}
 
 	// Expand ~ to home directory
@@ -116,16 +142,46 @@ func buildRST(docs []*scip.Document, repoID string) *rst.RST {
 			Symbols:      make(map[string]*rst.Symbol),
 		}
 
+		// Build occurrence index for line number and kind lookup
+		occIndex := make(map[string]struct {
+			line int32
+			kind string
+		})
+		for _, occ := range doc.Occurrences {
+			if len(occ.Range) > 0 && occ.Symbol != "" {
+				// Store the first (definition) occurrence's line
+				if _, exists := occIndex[occ.Symbol]; !exists {
+					// Determine kind from symbol_roles
+					kind := inferKindFromRoles(occ.SymbolRoles)
+					occIndex[occ.Symbol] = struct {
+						line int32
+						kind string
+					}{
+						line: int32(occ.Range[0]) + 1, // 1-indexed line
+						kind: kind,
+					}
+				}
+			}
+		}
+
 		for _, sym := range doc.Symbols {
 			if scip.IsLocalSymbol(sym.Symbol) {
 				continue
 			}
 			rstSym := &rst.Symbol{
-				Symbol: sym.Symbol,
-				Kind:   sym.Kind.String(),
+				Symbol:    sym.Symbol,
+				Kind:      sym.Kind.String(),
+				Signature: buildSignature(sym),
 			}
 			if len(sym.Documentation) > 0 {
 				rstSym.Documentation = strings.Join(sym.Documentation, "\n")
+			}
+			// Set line number and kind from occurrence
+			if info, ok := occIndex[sym.Symbol]; ok {
+				rstSym.Line = info.line
+				if rstSym.Kind == "UnspecifiedKind" || rstSym.Kind == "" {
+					rstSym.Kind = info.kind
+				}
 			}
 			rstDoc.Symbols[sym.Symbol] = rstSym
 			symbolIndex[sym.Symbol] = rstSym
@@ -218,6 +274,58 @@ func expandHome(path string) string {
 		}
 	}
 	return path
+}
+
+func buildSignature(sym *scip.SymbolInformation) string {
+	// Use signature documentation if available
+	if sym.SignatureDocumentation != nil && sym.SignatureDocumentation.Text != "" {
+		return sym.SignatureDocumentation.Text
+	}
+
+	// Try to extract signature from documentation (code block)
+	for _, doc := range sym.Documentation {
+		if strings.HasPrefix(doc, "```go\n") && strings.HasSuffix(doc, "\n```") {
+			// Extract content between code block markers
+			content := doc[6 : len(doc)-4]
+			return content
+		}
+	}
+
+	// Build a basic signature from display name and kind
+	prefix := ""
+	switch sym.Kind {
+	case scip.SymbolInformation_Function, scip.SymbolInformation_Method:
+		prefix = "func "
+	case scip.SymbolInformation_Struct:
+		prefix = "type "
+	case scip.SymbolInformation_Class:
+		prefix = "class "
+	case scip.SymbolInformation_Interface:
+		prefix = "interface "
+	case scip.SymbolInformation_Constant:
+		prefix = "const "
+	case scip.SymbolInformation_Field:
+		prefix = ""
+	case scip.SymbolInformation_TypeParameter:
+		prefix = ""
+	}
+
+	name := sym.DisplayName
+	if name == "" {
+		name = extractSymbolName(sym.Symbol)
+	}
+	return prefix + name
+}
+
+func inferKindFromRoles(roles int32) string {
+	// Check for definition role
+	isDefinition := (roles & int32(scip.SymbolRole_Definition)) > 0
+	isForwardDefinition := (roles & int32(scip.SymbolRole_ForwardDefinition)) > 0
+
+	if isDefinition || isForwardDefinition {
+		return "FUNC"
+	}
+	return ""
 }
 
 func writeRST(path string, rstTable *rst.RST) error {
