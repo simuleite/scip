@@ -16,43 +16,6 @@ import (
 	rst "github.com/sourcegraph/scip/cmd/scip/rst"
 )
 
-// codeBlockNodeTypes maps language SCIP codes to tree-sitter node types for extractable code blocks
-// Includes functions, methods, structs, classes, interfaces, types, etc.
-var codeBlockNodeTypes = map[string][]string{
-	"go": {
-		"function_declaration", "method_declaration",
-		"type_declaration", "type_spec",
-	},
-	"typescript": {
-		"function_declaration", "function_expression", "arrow_function", "method_definition", "generator_function",
-		"class_declaration", "interface_declaration", "type_alias_declaration",
-	},
-	"javascript": {
-		"function_declaration", "function_expression", "arrow_function", "method_definition", "generator_function",
-		"class_declaration",
-	},
-	"python": {
-		"function_definition",
-		"class_definition",
-	},
-	"rust": {
-		"function_item",
-		"struct_item", "enum_item", "impl_item", "trait_item",
-	},
-	"java": {
-		"method_declaration", "constructor_declaration",
-		"class_declaration", "interface_declaration", "enum_declaration",
-	},
-	"c": {
-		"function_definition", "method_definition",
-		"struct_specifier", "enum_specifier",
-	},
-	"cpp": {
-		"function_definition", "method_definition",
-		"struct_specifier", "class_specifier", "enum_specifier",
-	},
-}
-
 // detectRepoID extracts the module name from SCIP symbol format.
 // SCIP symbol format: "<tool> <manager> <module> <commit> `path`/symbol"
 func detectRepoID(index *scip.Index) string {
@@ -243,25 +206,17 @@ func buildRST(docs []*scip.Document, repoID, projectRoot string, verbose bool) *
 					rstSym.Kind = info.kind
 				}
 			}
-			// Set documentation from SCIP
-			if len(sym.Documentation) > 0 {
-				rstSym.Documentation = strings.Join(sym.Documentation, "\n")
-			}
-			// Extract source code from file using tree-sitter (only for functions/methods)
-			if projectRoot != "" && rstSym.Line > 0 && doc.RelativePath != "" && isCodeExtractableKind(rstSym.Kind) {
-				// Use RelativePath directly if it's already absolute, otherwise join with projectRoot
-				sourceFile := doc.RelativePath
-				if !filepath.IsAbs(doc.RelativePath) {
-					sourceFile = filepath.Join(projectRoot, doc.RelativePath)
-				}
-				if verbose {
-					fmt.Fprintf(os.Stderr, "DEBUG: doc.RelativePath=%q, projectRoot=%q, isAbs=%v, sourceFile=%q\n",
-						doc.RelativePath, projectRoot, filepath.IsAbs(doc.RelativePath), sourceFile)
-				}
-				code := treeSitterExtractCode(sourceFile, rstSym.Line, doc.Language, verbose)
+			// Extract source code from file using tree-sitter
+			if projectRoot != "" && rstSym.Line > 0 && doc.RelativePath != "" {
+				sourceFile := filepath.Join(projectRoot, doc.RelativePath)
+				code := treeSitterExtractCode(sourceFile, rstSym.Line, verbose)
 				if code != "" {
-					rstSym.Code = code
+					rstSym.Documentation = code
 				}
+			}
+			// Fallback to documentation if code extraction failed
+			if rstSym.Documentation == "" && len(sym.Documentation) > 0 {
+				rstSym.Documentation = strings.Join(sym.Documentation, "\n")
 			}
 			rstDoc.Symbols[sym.Symbol] = rstSym
 			symbolIndex[sym.Symbol] = rstSym
@@ -408,16 +363,6 @@ func inferKindFromRoles(roles int32) string {
 	return ""
 }
 
-func isCodeExtractableKind(kind string) bool {
-	// Only extract code for functions, methods, and similar executable code blocks
-	switch kind {
-	case "Function", "Method", "FUNC", "Constructor", "Destructor":
-		return true
-	default:
-		return false
-	}
-}
-
 func writeRST(path string, rstTable *rst.RST) error {
 	f, err := os.Create(path)
 	if err != nil {
@@ -438,90 +383,7 @@ func writeRST(path string, rstTable *rst.RST) error {
 }
 
 // treeSitterExtractCode extracts the complete function body from a source file
-// using tree-sitter to parse source code and locate the function containing the target line.
-func treeSitterExtractCode(sourceFile string, line int32, lang string, verbose bool) string {
-	if verbose {
-		fmt.Fprintf(os.Stderr, "DEBUG: treeSitterExtractCode called with sourceFile=%q, line=%d, lang=%q\n", sourceFile, line, lang)
-	}
-	data, err := os.ReadFile(sourceFile)
-	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "DEBUG: failed to read file: %v\n", err)
-		}
-		return ""
-	}
-	sourceCode := string(data)
-	if verbose {
-		fmt.Fprintf(os.Stderr, "DEBUG: read %d bytes from file\n", len(data))
-	}
-
-	// Parse source code with appropriate language
-	var root *sitter.Node
-	switch lang {
-	case "go":
-		root = sitter.Parse([]byte(sourceCode), golang.GetLanguage())
-	default:
-		// Fallback to Go parser for unknown languages
-		root = sitter.Parse([]byte(sourceCode), golang.GetLanguage())
-	}
-	if root == nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "DEBUG: tree-sitter parse returned nil\n")
-		}
-		return ""
-	}
-	if verbose {
-		fmt.Fprintf(os.Stderr, "DEBUG: tree-sitter parse succeeded, root type=%s\n", root.Type())
-	}
-
-	// Get function/method node types for the language
-	nodeTypes, ok := codeBlockNodeTypes[lang]
-	if !ok {
-		// Default to Go for unknown languages
-		nodeTypes = codeBlockNodeTypes["go"]
-	}
-
-	// Build a set for quick lookup
-	nodeTypeSet := make(map[string]bool)
-	for _, t := range nodeTypes {
-		nodeTypeSet[t] = true
-	}
-
-	// Find function containing the target line
-	targetLine := uint32(line)
-	var codeNode *sitter.Node
-	dfsWalk(root, func(n *sitter.Node) {
-		if nodeTypeSet[n.Type()] {
-			start := n.StartPoint().Row + 1 // 1-based
-			end := n.EndPoint().Row + 1
-			if verbose {
-				fmt.Fprintf(os.Stderr, "DEBUG: found %s at lines %d-%d\n", n.Type(), start, end)
-			}
-			if targetLine >= start && targetLine <= end {
-				codeNode = n
-				if verbose {
-					fmt.Fprintf(os.Stderr, "DEBUG: matched %s at lines %d-%d for target line %d\n", n.Type(), start, end, targetLine)
-				}
-			}
-		}
-	})
-
-	if codeNode == nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "DEBUG: no function found containing line %d\n", targetLine)
-		}
-		return ""
-	}
-
-	// Extract function source code
-	start := codeNode.StartByte()
-	end := codeNode.EndByte()
-	code := sourceCode[start:end]
-	if verbose {
-		fmt.Fprintf(os.Stderr, "DEBUG: extracted %d bytes of code (start=%d, end=%d)\n", len(code), start, end)
-	}
-	return code
-}
+// using tree-sitter to parse Go code and locate the function containing the target line.
 
 func dfsWalk(node *sitter.Node, fn func(*sitter.Node)) {
 	fn(node)
@@ -563,19 +425,8 @@ func extractPathFromSymbol(scipSymbol string) string {
 // stripFilePrefix removes "file://" prefix from a file URL.
 func stripFilePrefix(url string) string {
 	// Handle file:///, file://, file:/ prefixes
-	// file:///Users/... -> /Users/... (file:// + /Users/...)
-	// file://localhost/Users/... -> /Users/...
-	if strings.HasPrefix(url, "file:///") {
-		return url[7:] // Keep the leading /
-	}
-	if strings.HasPrefix(url, "file://localhost/") {
-		return url[16:]
-	}
-	if strings.HasPrefix(url, "file://") {
-		return url[7:]
-	}
-	if strings.HasPrefix(url, "file:/") {
-		return url[6:]
-	}
+	url = strings.TrimPrefix(url, "file:///")
+	url = strings.TrimPrefix(url, "file://")
+	url = strings.TrimPrefix(url, "file:/")
 	return url
 }

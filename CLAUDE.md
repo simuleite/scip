@@ -1,3 +1,16 @@
+# SCIP CLI
+```
+scip parse index.scip
+```
+```
+# get all file-path of signle repo
+scip cli tree_repo <repo_name>
+# get symbols, signature of single file
+scip cli get_file_structure <repo_name> <relative-file-path>
+# get detail code, references, dependencies of single repo; use refer/depend's repo, file, symbol, line to recursively jumping code
+scip cli get_file_symbol <repo_name> <relative-file-path> <symbol> [line]
+```
+
 # Developing SCIP
 
 - [Project structure](#project-structure)
