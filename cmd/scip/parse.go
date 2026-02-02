@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	"github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/golang"
 	"github.com/urfave/cli/v2"
 	"google.golang.org/protobuf/proto"
 
@@ -76,11 +78,23 @@ func parseMain(indexPath, outputDir, repoID string) error {
 		return err
 	}
 
+	println("DEBUG: parseMain called")
+
 	// Auto-detect repoID from SCIP index if not provided
 	if repoID == "" {
 		repoID = detectRepoID(index)
 		if repoID == "" {
 			return errors.New("could not auto-detect repo ID; please specify --repo")
+		}
+	}
+
+	// Extract project root from index metadata
+	var projectRoot string
+	fmt.Fprintf(os.Stderr, "DEBUG: index=%p, index.Metadata=%p\n", index, index.Metadata)
+	if index.Metadata != nil {
+		fmt.Fprintf(os.Stderr, "DEBUG: ProjectRoot=%q\n", index.Metadata.ProjectRoot)
+		if index.Metadata.ProjectRoot != "" {
+			projectRoot = stripFilePrefix(index.Metadata.ProjectRoot)
 		}
 	}
 
@@ -104,7 +118,7 @@ func parseMain(indexPath, outputDir, repoID string) error {
 
 	// Process each language
 	for lang, docs := range langDocs {
-		rstTable := buildRST(docs, repoID)
+		rstTable := buildRST(docs, repoID, projectRoot)
 
 		// Sanitize repo ID for filename
 		sanitizedRepoID := sanitizeRepoID(repoID)
@@ -125,7 +139,7 @@ func parseMain(indexPath, outputDir, repoID string) error {
 	return nil
 }
 
-func buildRST(docs []*scip.Document, repoID string) *rst.RST {
+func buildRST(docs []*scip.Document, repoID, projectRoot string) *rst.RST {
 	rstTable := &rst.RST{
 		Metadata: &rst.Metadata{
 			Repo:     repoID,
@@ -173,15 +187,24 @@ func buildRST(docs []*scip.Document, repoID string) *rst.RST {
 				Kind:      sym.Kind.String(),
 				Signature: buildSignature(sym),
 			}
-			if len(sym.Documentation) > 0 {
-				rstSym.Documentation = strings.Join(sym.Documentation, "\n")
-			}
 			// Set line number and kind from occurrence
 			if info, ok := occIndex[sym.Symbol]; ok {
 				rstSym.Line = info.line
 				if rstSym.Kind == "UnspecifiedKind" || rstSym.Kind == "" {
 					rstSym.Kind = info.kind
 				}
+			}
+			// Extract source code from file using tree-sitter
+			if projectRoot != "" && rstSym.Line > 0 && doc.RelativePath != "" {
+				sourceFile := filepath.Join(projectRoot, doc.RelativePath)
+				code := treeSitterExtractCode(sourceFile, rstSym.Line)
+				if code != "" {
+					rstSym.Documentation = code
+				}
+			}
+			// Fallback to documentation if code extraction failed
+			if rstSym.Documentation == "" && len(sym.Documentation) > 0 {
+				rstSym.Documentation = strings.Join(sym.Documentation, "\n")
 			}
 			rstDoc.Symbols[sym.Symbol] = rstSym
 			symbolIndex[sym.Symbol] = rstSym
@@ -345,4 +368,88 @@ func writeRST(path string, rstTable *rst.RST) error {
 		return err
 	}
 	return f.Sync()
+}
+
+// treeSitterExtractCode extracts the complete function body from a source file
+// using tree-sitter to parse Go code and locate the function containing the target line.
+func treeSitterExtractCode(sourceFile string, line int32) string {
+	data, err := os.ReadFile(sourceFile)
+	if err != nil {
+		return ""
+	}
+	sourceCode := string(data)
+
+	// Parse Go source
+	root := sitter.Parse([]byte(sourceCode), golang.GetLanguage())
+	if root == nil {
+		return ""
+	}
+
+	// Find function containing the target line
+	targetLine := uint32(line)
+	var funcNode *sitter.Node
+	dfsWalk(root, func(n *sitter.Node) {
+		if n.Type() == "function_declaration" {
+			start := n.StartPoint().Row + 1 // 1-based
+			end := n.EndPoint().Row + 1
+			if targetLine >= start && targetLine <= end {
+				funcNode = n
+			}
+		}
+	})
+
+	if funcNode == nil {
+		return ""
+	}
+
+	// Extract function source code
+	start := funcNode.StartByte()
+	end := funcNode.EndByte()
+	return sourceCode[start:end]
+}
+
+func dfsWalk(node *sitter.Node, fn func(*sitter.Node)) {
+	fn(node)
+	for i := 0; i < int(node.ChildCount()); i++ {
+		dfsWalk(node.Child(i), fn)
+	}
+}
+
+// extractPathFromSymbol extracts the source file path from a SCIP symbol.
+// SCIP symbol format: "scip-go gomod github.com/sourcegraph/scip c081503f250d `github.com/sourcegraph/scip/cmd/scip`/getFileSymbolMain()"
+func extractPathFromSymbol(scipSymbol string) string {
+	// Find backtick-enclosed path
+	backtickStart := strings.Index(scipSymbol, "`")
+	if backtickStart == -1 {
+		return ""
+	}
+	backtickEnd := strings.Index(scipSymbol[backtickStart+1:], "`")
+	if backtickEnd == -1 {
+		return ""
+	}
+	pathWithModule := scipSymbol[backtickStart+1 : backtickStart+1+backtickEnd]
+
+	// Extract path after the module prefix
+	// Format: "github.com/sourcegraph/scip/cmd/scip" or "github.com/sourcegraph/scip/cmd/scip/rst.go"
+	modulePrefix := "github.com/sourcegraph/scip/"
+	idx := strings.Index(pathWithModule, modulePrefix)
+	if idx == -1 {
+		return pathWithModule
+	}
+	relativePath := pathWithModule[idx+len(modulePrefix):]
+
+	// Add .go extension if not present
+	if !strings.HasSuffix(relativePath, ".go") {
+		relativePath += ".go"
+	}
+	return relativePath
+}
+
+// stripFilePrefix removes "file://" prefix from a file URL.
+func stripFilePrefix(url string) string {
+	// Handle file:///, file://, file:/ prefixes
+	url = strings.TrimPrefix(url, "file:///")
+	url = strings.TrimPrefix(url, "file://")
+	url = strings.TrimPrefix(url, "file:/")
+	return url
 }

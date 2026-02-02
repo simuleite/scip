@@ -27,7 +27,8 @@ func commands() []*cli.Command {
 	convert := convertCommand()
 	parse := parseCommand()
 	rstCLI := *rstCLICommands()
-	return []*cli.Command{&lint, &print, &snapshot, &stats, &test, &convert, &parse, &rstCLI}
+	tui := tuiCommand()
+	return []*cli.Command{&lint, &print, &snapshot, &stats, &test, &convert, &parse, &rstCLI, &tui}
 }
 
 //go:embed version.txt
