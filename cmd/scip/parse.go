@@ -243,10 +243,6 @@ func buildRST(docs []*scip.Document, repoID, projectRoot string, verbose bool) *
 					rstSym.Kind = info.kind
 				}
 			}
-			// Set documentation from SCIP
-			if len(sym.Documentation) > 0 {
-				rstSym.Documentation = strings.Join(sym.Documentation, "\n")
-			}
 			// Extract source code from file using tree-sitter (only for functions/methods)
 			if projectRoot != "" && rstSym.Line > 0 && doc.RelativePath != "" && isCodeExtractableKind(rstSym.Kind) {
 				// Use RelativePath directly if it's already absolute, otherwise join with projectRoot

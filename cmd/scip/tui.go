@@ -648,7 +648,7 @@ func loadSymbolDetail(rstPath, repo, filePath, symbolName string, line int) tea.
 				line:      int(foundSym.Line),
 				deps:      foundSym.DependenceOn,
 				refs:      foundSym.ReferenceBy,
-				code:      foundSym.Documentation,
+				code:      foundSym.Code,
 				symbolKey: extractSymbolKey(foundSym.Symbol),
 			},
 		}

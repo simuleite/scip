@@ -188,11 +188,11 @@ type Symbol struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Symbol        string                 `protobuf:"bytes,1,opt,name=symbol,proto3" json:"symbol,omitempty"`                                 // Full SCIP symbol
 	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`                                     // Symbol kind (FUNC, STRUCT, METHOD, etc.)
-	Documentation string                 `protobuf:"bytes,3,opt,name=documentation,proto3" json:"documentation,omitempty"`                   // Documentation string
-	ReferenceBy   []string               `protobuf:"bytes,4,rep,name=reference_by,json=referenceBy,proto3" json:"reference_by,omitempty"`    // Symbols that reference this symbol
-	DependenceOn  []string               `protobuf:"bytes,5,rep,name=dependence_on,json=dependenceOn,proto3" json:"dependence_on,omitempty"` // Symbols this symbol depends on
-	Signature     string                 `protobuf:"bytes,6,opt,name=signature,proto3" json:"signature,omitempty"`                           // Function/method signature (e.g., "func foo(bar string) error")
-	Line          int32                  `protobuf:"varint,7,opt,name=line,proto3" json:"line,omitempty"`                                    // Line number where symbol is defined
+	ReferenceBy   []string               `protobuf:"bytes,3,rep,name=reference_by,json=referenceBy,proto3" json:"reference_by,omitempty"`    // Symbols that reference this symbol
+	DependenceOn  []string               `protobuf:"bytes,4,rep,name=dependence_on,json=dependenceOn,proto3" json:"dependence_on,omitempty"` // Symbols this symbol depends on
+	Signature     string                 `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`                           // Function/method signature (e.g., "func foo(bar string) error")
+	Line          int32                  `protobuf:"varint,6,opt,name=line,proto3" json:"line,omitempty"`                                    // Line number where symbol is defined
+	Code          string                 `protobuf:"bytes,7,opt,name=code,proto3" json:"code,omitempty"`                                     // Source code extracted by tree-sitter (for functions, methods, etc.)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -241,13 +241,6 @@ func (x *Symbol) GetKind() string {
 	return ""
 }
 
-func (x *Symbol) GetDocumentation() string {
-	if x != nil {
-		return x.Documentation
-	}
-	return ""
-}
-
 func (x *Symbol) GetReferenceBy() []string {
 	if x != nil {
 		return x.ReferenceBy
@@ -276,6 +269,13 @@ func (x *Symbol) GetLine() int32 {
 	return 0
 }
 
+func (x *Symbol) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
 var File_rst_proto protoreflect.FileDescriptor
 
 const file_rst_proto_rawDesc = "" +
@@ -295,15 +295,15 @@ const file_rst_proto_rawDesc = "" +
 	"\asymbols\x18\x02 \x03(\v2\x1a.rst.Document.SymbolsEntryR\asymbols\x1aG\n" +
 	"\fSymbolsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12!\n" +
-	"\x05value\x18\x02 \x01(\v2\v.rst.SymbolR\x05value:\x028\x01\"\xd4\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\v.rst.SymbolR\x05value:\x028\x01\"\xc2\x01\n" +
 	"\x06Symbol\x12\x16\n" +
 	"\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\x12$\n" +
-	"\rdocumentation\x18\x03 \x01(\tR\rdocumentation\x12!\n" +
-	"\freference_by\x18\x04 \x03(\tR\vreferenceBy\x12#\n" +
-	"\rdependence_on\x18\x05 \x03(\tR\fdependenceOn\x12\x1c\n" +
-	"\tsignature\x18\x06 \x01(\tR\tsignature\x12\x12\n" +
-	"\x04line\x18\a \x01(\x05R\x04lineB*Z(github.com/sourcegraph/scip/cmd/scip/rstb\x06proto3"
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12!\n" +
+	"\freference_by\x18\x03 \x03(\tR\vreferenceBy\x12#\n" +
+	"\rdependence_on\x18\x04 \x03(\tR\fdependenceOn\x12\x1c\n" +
+	"\tsignature\x18\x05 \x01(\tR\tsignature\x12\x12\n" +
+	"\x04line\x18\x06 \x01(\x05R\x04line\x12\x12\n" +
+	"\x04code\x18\a \x01(\tR\x04codeB*Z(github.com/sourcegraph/scip/cmd/scip/rstb\x06proto3"
 
 var (
 	file_rst_proto_rawDescOnce sync.Once

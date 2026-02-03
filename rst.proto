@@ -28,10 +28,9 @@ message Document {
 message Symbol {
   string symbol = 1;           // Full SCIP symbol
   string kind = 2;             // Symbol kind (FUNC, STRUCT, METHOD, etc.)
-  string documentation = 3;    // Documentation from SCIP (original documentation text)
-  repeated string reference_by = 4;  // Symbols that reference this symbol
-  repeated string dependence_on = 5; // Symbols this symbol depends on
-  string signature = 6;        // Function/method signature (e.g., "func foo(bar string) error")
-  int32 line = 7;              // Line number where symbol is defined
-  string code = 8;              // Source code extracted by tree-sitter (for functions, methods, etc.)
+  repeated string reference_by = 3;  // Symbols that reference this symbol
+  repeated string dependence_on = 4; // Symbols this symbol depends on
+  string signature = 5;        // Function/method signature (e.g., "func foo(bar string) error")
+  int32 line = 6;              // Line number where symbol is defined
+  string code = 7;             // Source code extracted by tree-sitter (for functions, methods, etc.)
 }

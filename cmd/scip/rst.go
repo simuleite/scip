@@ -365,8 +365,8 @@ func getFileSymbolMain(outputDir, repo, filePath, symbolName, lineArg string, ou
 		}
 		fmt.Fprint(out, "]}]")
 	}
-	if details.Documentation != "" {
-		fmt.Fprintf(out, `,"codes":%q`, details.Documentation)
+	if details.Code != "" {
+		fmt.Fprintf(out, `,"codes":%q`, details.Code)
 	}
 	fmt.Fprintln(out, "}]}")
 	return nil
@@ -379,7 +379,7 @@ type SymbolDetails struct {
 	Line         int32
 	Dependencies []string
 	References   []string
-	Documentation string
+	Code         string
 }
 
 func getSymbolDetails(rstPath, filePath, symbolName string, line int32) (*SymbolDetails, error) {
@@ -407,13 +407,13 @@ func getSymbolDetails(rstPath, filePath, symbolName string, line int32) (*Symbol
 				continue
 			}
 			return &SymbolDetails{
-				Name:          baseName,
-				Signature:     sym.Signature,
-				FilePath:      filePath,
-				Line:          sym.Line,
-				Dependencies:  sym.DependenceOn,
-				References:    sym.ReferenceBy,
-				Documentation: sym.Documentation,
+				Name:         baseName,
+				Signature:    sym.Signature,
+				FilePath:     filePath,
+				Line:         sym.Line,
+				Dependencies: sym.DependenceOn,
+				References:   sym.ReferenceBy,
+				Code:         sym.Code,
 			}, nil
 		}
 	}
